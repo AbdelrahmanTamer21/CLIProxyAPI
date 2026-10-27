@@ -80,9 +80,15 @@ const (
 	blockReasonOther
 )
 
+// usageLimitCooldownThreshold separates a short rate-limit cooldown, which clients
+// should wait out via Retry-After, from an exhausted quota window (hours or days),
+// which clients should surface as a final usage limit instead of sleeping or retrying.
+const usageLimitCooldownThreshold = 5 * time.Minute
+
 type modelCooldownError struct {
 	model    string
 	resetIn  time.Duration
+	resetsAt time.Time
 	provider string
 	cause    error
 }
@@ -104,8 +110,14 @@ func newModelCooldownErrorWithCause(model, provider string, resetIn time.Duratio
 		model:    model,
 		provider: provider,
 		resetIn:  resetIn,
+		resetsAt: time.Now().Add(resetIn),
 		cause:    cause,
 	}
+}
+
+// IsUsageLimit reports whether the cooldown is long enough to be an exhausted quota.
+func (e *modelCooldownError) IsUsageLimit() bool {
+	return e != nil && e.resetIn > usageLimitCooldownThreshold
 }
 
 func (e *modelCooldownError) IsModelCooldown() bool {
@@ -147,6 +159,11 @@ func (e *modelCooldownError) Error() string {
 	}
 	if e.provider != "" {
 		errorBody["provider"] = e.provider
+	}
+	if e.IsUsageLimit() {
+		errorBody["type"] = "usage_limit_reached"
+		errorBody["retryable"] = false
+		errorBody["resets_at"] = e.resetsAt.Unix()
 	}
 	if e.cause != nil {
 		if causeText := ExtractUpstreamErrorSummary(e.cause.Error()); causeText != "" {
@@ -353,6 +370,12 @@ func (e *modelCooldownError) StatusCode() int {
 func (e *modelCooldownError) Headers() http.Header {
 	headers := make(http.Header)
 	headers.Set("Content-Type", "application/json")
+	if e.IsUsageLimit() {
+		// Official Anthropic and OpenAI SDKs honor X-Should-Retry; a multi-hour
+		// Retry-After would otherwise park the client instead of failing fast.
+		headers.Set("X-Should-Retry", "false")
+		return headers
+	}
 	resetSeconds := int(math.Ceil(e.resetIn.Seconds()))
 	if resetSeconds < 0 {
 		resetSeconds = 0

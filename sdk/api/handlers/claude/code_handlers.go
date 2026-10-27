@@ -593,8 +593,11 @@ func (h *ClaudeCodeAPIHandler) WriteErrorResponse(c *gin.Context, msg *interface
 		return
 	}
 	if msg != nil && msg.Error != nil {
-		for _, value := range coreauth.SafeResponseHeaders(msg.Error).Values("Retry-After") {
-			c.Writer.Header().Add("Retry-After", value)
+		safeHeaders := coreauth.SafeResponseHeaders(msg.Error)
+		for _, key := range []string{"Retry-After", "X-Should-Retry"} {
+			for _, value := range safeHeaders.Values(key) {
+				c.Writer.Header().Add(key, value)
+			}
 		}
 	}
 	if msg != nil && msg.Addon != nil && handlers.PassthroughHeadersEnabled(h.CurrentConfig()) {
@@ -668,6 +671,10 @@ func claudeErrorDetailFromText(status int, errText string) (string, string) {
 				}
 			}
 		}
+	}
+	// Anthropic has no usage-limit error type; its clients key off rate_limit_error.
+	if errType == "usage_limit_reached" {
+		errType = "rate_limit_error"
 	}
 
 	return errType, message

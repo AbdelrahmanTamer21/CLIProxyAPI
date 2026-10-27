@@ -313,6 +313,30 @@ func TestSafeResponseHeaders_IncludesModelCooldownRetryAfter(t *testing.T) {
 	}
 }
 
+func TestModelCooldownError_ExhaustedQuotaIsFinalUsageLimit(t *testing.T) {
+	t.Parallel()
+
+	short := newModelCooldownError("claude-opus-5-5", "claude", usageLimitCooldownThreshold)
+	if short.IsUsageLimit() || strings.Contains(short.Error(), "usage_limit_reached") {
+		t.Fatalf("cooldown at the threshold must stay a retryable rate limit: %s", short.Error())
+	}
+
+	long := newModelCooldownError("claude-opus-5-5", "claude", 140*time.Hour)
+	headers := SafeResponseHeaders(long)
+	if got := headers.Get("Retry-After"); got != "" {
+		t.Fatalf("Retry-After = %q, want unset", got)
+	}
+	if got := headers.Get("X-Should-Retry"); got != "false" {
+		t.Fatalf("X-Should-Retry = %q, want false", got)
+	}
+	body := long.Error()
+	for _, want := range []string{`"type":"usage_limit_reached"`, `"retryable":false`, `"resets_at":`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body missing %s: %s", want, body)
+		}
+	}
+}
+
 func TestMixedUnavailableErrorLocked_GlobalModelErrorPriorityAcrossShards(t *testing.T) {
 	t.Parallel()
 
