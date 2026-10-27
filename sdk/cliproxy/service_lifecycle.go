@@ -12,6 +12,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/redisqueue"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/keepalive"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
@@ -145,6 +146,8 @@ func (s *Service) Run(ctx context.Context) error {
 		s.authManager = newDefaultAuthManager()
 	}
 
+	s.applyCacheKeepaliveConfig(s.cfg)
+
 	if homeEnabled {
 		s.startHomeSubscriber(ctx)
 	}
@@ -262,6 +265,8 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		if ctx == nil {
 			ctx = context.Background()
 		}
+
+		keepalive.SetDefault(nil)
 
 		s.homeMu.Lock()
 		runCancel := s.runCancel
